@@ -1,0 +1,108 @@
+on early-init && property:ro.bootmode=mot-factory
+   insmod /vendor/lib/modules/moto_f_usbnet.ko
+
+on early-init
+   exec_background u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules mmi_annotate mmi_info tzlog_dump watchdog_cpu_ctx mmi_sys_temp qpnp-power-on-mmi wl2864c.ko qpnp-smbcharger-mmi.ko
+   exec u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules mcDrvModule
+
+on mmi-priority
+   # Only high priority MMI DLKMs loaded here
+   # For instance, sensor_class referenced from several DLKMs
+   # and needs to load first. Touchscreen might need extra time
+   # to perform firmware update if necessary
+   setprop vendor.mmi_init.stage priority
+   exec_background u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules sensors_class.ko mmi_relay.ko sx933x_sar.ko touchscreen_mmi.ko
+
+on mmi-priority && property:ro.vendor.hw.radio=JAPAN
+   exec_background u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules aw8624.ko
+
+on fs
+   # Majority of MMI DLKMs should be in this group
+   insmod /vendor/lib/modules/aw882xx_k419.ko
+   setprop vendor.mmi_init.stage common
+   exec_background u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules cci_intf.ko watchdogtest
+   exec u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -a -d /vendor/lib/modules focaltech_0flash_mmi.ko
+   setprop vendor.mmi_init.modules_loaded 1
+
+   insmod /vendor/lib/modules/fm_ctrl.ko
+   insmod /vendor/lib/modules/qpnp_adaptive_charge.ko
+
+on fs && property:ro.build.type=userdebug
+   insmod /vendor/lib/modules/mmi_sigprint.ko
+
+on post-fs-data
+   # Load DLKM that can afford being loaded later
+   setprop vendor.mmi_init.stage late
+   #start vendor.mmi_modules
+   #wait_for_prop init.svc.vendor.mmi_modules stopped
+   setprop vendor.mmi_init.stage complete
+
+on boot
+   # change permission for capsensor
+   chown system system /sys/class/capsense/reset
+   chown system system /sys/class/capsense/int_state
+   # Change ownership for capsensor
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch0/enable
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch0/poll_delay
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch1/enable
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch1/poll_delay
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch2/enable
+   chown root input /sys/class/sensors/Moto\ CapSense\ Ch2/poll_delay
+   # Change ownership for touch gesture
+   chown root input /sys/class/sensors/dt-gesture/enable
+   chown root input /sys/class/sensors/dt-gesture/poll_delay
+   # Touch grip suppression control
+   chown system system /sys/class/touchscreen/primary/suppression
+   chmod 0660 /sys/class/touchscreen/primary/suppression
+   chown system system /sys/class/touchscreen/primary/pill_region
+   chmod 0660 /sys/class/touchscreen/primary/pill_region
+   chown system system /sys/class/touchscreen/primary/hold_distance
+   chmod 0660 /sys/class/touchscreen/primary/hold_distance
+   chown system system /sys/class/touchscreen/primary/gs_distance
+   chmod 0660 /sys/class/touchscreen/primary/gs_distance
+   # Change ownership and permission for fm control intf
+   chown system system /sys/devices/platform/soc/soc:fm_wcn39x0/elna_en
+
+   # Set adaptive charging perms for HAL
+   chown system system /sys/module/qpnp_adaptive_charge/parameters/upper_limit
+   chown system system /sys/module/qpnp_adaptive_charge/parameters/lower_limit
+
+service vendor.mmi_modules /vendor/bin/init.mmi.modules.sh
+    user root
+    oneshot
+    disabled
+
+service capsense_reset /system/vendor/bin/capsense_reset
+   class core
+   user system
+   group system input
+   disabled
+
+on property:sys.boot_completed=1
+    start capsense_reset
+
+service vendor.mmi-charge-sh /vendor/bin/init.mmi.charge.sh
+    class core
+    user root
+    oneshot
+    disabled
+
+service vendor.ident-fps-sh /vendor/bin/init.oem.fingerprint.sh
+    class core
+    user root
+    group drmrpc system
+    oneshot
+    disabled
+
+service vendor.hal-fps-sh /vendor/bin/init.oem.fingerprint2.sh
+    class late_start
+    user root
+    group system
+    oneshot
+
+on post-fs
+    start vendor.mmi-charge-sh
+
+on moto-charger
+    enable vendor.qti-chg-policy-sh
+    start vendor.qti-chg-policy-sh
